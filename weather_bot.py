@@ -3,8 +3,8 @@ import json
 from datetime import datetime, timedelta
 
 # 配置資訊 (直接放在程式碼中)
-TELEGRAM_TOKEN = "你的_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "你的_TELEGRAM_CHAT_ID"
+TELEGRAM_TOKEN = "8780856101:AAHmuoXdAi50LjceLhzdTfXh-Ju2DGlM4E4"
+CHAT_ID = "7706163480"
 AI_API_KEY = "sk_FvxLKDYP4nNlPdKvXju8wL753iMB3u1T"
 AI_ENDPOINT = "https://gen.pollinations.ai/v1/chat/completions"
 
