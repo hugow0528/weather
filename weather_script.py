@@ -5,7 +5,7 @@ import pytz
 
 # ================= 配置區 =================
 TG_TOKEN = "8780856101:AAHmuoXdAi50LjceLhzdTfXh-Ju2DGlM4E4"
-TG_CHAT_ID = "7706163480" # <--- 填入你啱啱攞到嘅 Chat ID
+TG_CHAT_ID = "7706163480"  # <--- 記得填返你嘅 Chat ID
 AI_API_KEY = "sk_FvxLKDYP4nNlPdKvXju8wL753iMB3u1T"
 DEFAULT_LOCATION = "元朗公園"
 # ==========================================
@@ -14,57 +14,54 @@ def log(msg):
     print(f"[{datetime.datetime.now(pytz.timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 def get_weather_data():
-    log("正在從香港天文台獲取即時數據...")
+    log("獲取天文台數據...")
     curr_res = requests.get("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc")
-    
-    log("正在獲取九天預測數據...")
     fore_res = requests.get("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc")
     
     curr_data = curr_res.json()
     fore_data = fore_res.json()
     
-    # 提取元朗公園溫度
+    # 1. 現時天氣
     temp_list = curr_data.get('temperature', {}).get('data', [])
-    yl_temp = next((item['value'] for item in temp_list if item['place'] == DEFAULT_LOCATION), "未知")
+    yl_temp = next((item['value'] for item in temp_list if item['place'] == DEFAULT_LOCATION), "N/A")
+    humidity = curr_data.get('humidity', {}).get('data', [{}])[0].get('value', "N/A")
+    warning = " ".join(curr_data.get('warningMessage', [])) or "暫無警告"
     
-    humidity = curr_data.get('humidity', {}).get('data', [{}])[0].get('value', "未知")
-    warning = curr_data.get('warningMessage', "目前無特別警告")
-    
-    # 提取今日/聽日預測
-    forecast = fore_data.get('weatherForecast', [])[0] # 攞最近嗰一日嘅預測
+    # 2. 未來三日預測 (具體日期)
+    forecast_list = []
+    for i in range(1, 4): # 攞聽日、後日、大後日
+        f = fore_data['weatherForecast'][i]
+        date_str = f['forecastDate'] # YYYYMMDD
+        formatted_date = f"{date_str[4:6]}/{date_str[6:8]}({f['week']})"
+        t_range = f"{f['forecastMintemp']['value']}-{f['forecastMaxtemp']['value']}°C"
+        desc = f['forecastForecast']
+        forecast_list.append(f"• {formatted_date}: {t_range} ({desc})")
     
     return {
         "location": DEFAULT_LOCATION,
         "temp": yl_temp,
         "humidity": humidity,
         "warning": warning,
-        "forecast_desc": forecast.get('forecastForecast', ''),
-        "forecast_temp": f"{forecast.get('forecastMintemp', {}).get('value')} - {forecast.get('forecastMaxtemp', {}).get('value')}°C"
+        "future": "\n".join(forecast_list)
     }
 
 def ask_ai(weather):
-    log("正在向 AI 請求穿衣建議...")
+    log("請求 AI 簡短建議...")
+    # 嚴格限制 AI 字數及格式
     prompt = f"""
-    你係一個香港男仔穿衣助手。請用地道廣東話回覆。
+    你是香港男仔天氣助手。請用「地道廣東話」極簡短回覆。
+    現在：{weather['temp']}度, 濕度{weather['humidity']}%, 警告:{weather['warning']}
+    未來：{weather['future']}
     
-    【當前天氣 - {weather['location']}】
-    氣溫：{weather['temp']}°C
-    濕度：{weather['humidity']}%
-    警告：{weather['warning']}
-    
-    【未來預測】
-    預測概況：{weather['forecast_desc']}
-    預測氣溫：{weather['forecast_temp']}
-    
-    請根據以上資料，考慮埋未來天氣變化，分兩部分建議：
-    1. 學校校服 (清單限制：恤衫長/短袖、長褲、毛衣背心、長袖毛衣、PE風褸、校褸、底衣/底褲(長/短/保暖/背心))。
-    2. 出街休閒 (男仔風格)。
+    請分兩行回覆，每行限 30 字內：
+    1. 學校：(限用:恤衫長/短袖,長褲,毛衣背心,長袖毛衣,PE風褸,校褸,底衣/褲)
+    2. 出街：(男仔建議)
+    不要廢話。
     """
     
     models = ["gemini-fast", "openai-fast"]
     for model in models:
         try:
-            log(f"嘗試使用模型: {model}")
             res = requests.post(
                 "https://gen.pollinations.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
@@ -72,39 +69,39 @@ def ask_ai(weather):
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}]
                 },
-                timeout=30
+                timeout=20
             )
-            return res.json()['choices'][0]['message']['content']
-        except Exception as e:
-            log(f"模型 {model} 發生錯誤: {str(e)}")
+            return res.json()['choices'][0]['message']['content'].strip()
+        except:
             continue
-    return "AI 暫時罷工，請自行決定穿衣。"
+    return "AI 忙碌中，請自行決定。"
 
 def send_telegram(text):
-    log("正在發送訊息至 Telegram...")
+    log("發送 Telegram...")
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+    # 使用 HTML 模式避免 Markdown 符號導致 render 失敗
     payload = {
         "chat_id": TG_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown"
+        "parse_mode": "HTML"
     }
     r = requests.post(url, json=payload)
-    if r.status_code == 200:
-        log("發送成功！")
-    else:
-        log(f"發送失敗: {r.text}")
+    if r.status_code != 200:
+        log(f"失敗: {r.text}")
 
 if __name__ == "__main__":
     try:
         data = get_weather_data()
         advice = ask_ai(data)
         
-        final_msg = f"📍 *{data['location']} 天氣提醒*\n"
-        final_msg += f"🌡️ 現在：{data['temp']}°C | 💧 {data['humidity']}%\n"
-        final_msg += f"🔮 預測：{data['forecast_temp']}\n"
-        final_msg += f"⚠️ {data['warning']}\n\n"
-        final_msg += f"{advice}"
+        # 組合最終訊息 (HTML 格式)
+        msg = f"<b>📍 {data['location']} 天氣</b>\n"
+        msg += f"🌡️ 現在: {data['temp']}°C | 💧 {data['humidity']}%\n"
+        msg += f"⚠️ {data['warning']}\n\n"
+        msg += f"<b>🔮 未來預測:</b>\n{data['future']}\n\n"
+        msg += f"<b>👕 穿衣建議:</b>\n{advice}"
         
-        send_telegram(final_msg)
+        send_telegram(msg)
+        log("完成！")
     except Exception as e:
-        log(f"程式運行出錯: {str(e)}")
+        log(f"出錯: {e}")
