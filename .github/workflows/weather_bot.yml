@@ -2,20 +2,20 @@ name: Daily Weather Bot
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 5 AM HK
-    - cron: '0 13 * * *' # 9 PM HK
+    - cron: '0 13 * * *' # 21:00 HK
+    - cron: '0 21 * * *' # 05:00 HK
   workflow_dispatch:
 
 jobs:
   run_bot:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # 必須要有寫入權限
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
@@ -23,13 +23,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests pytz
 
-      - name: Run Bot
+      - name: Run Script
         run: python weather_script.py
 
       - name: Commit and Push changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add subscribers.json
-          git commit -m "Update subscribers list" || exit 0
+          git add subscribers.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update subscribers"
           git push
