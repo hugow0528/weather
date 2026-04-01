@@ -2,21 +2,20 @@ name: Daily Weather Bot
 
 on:
   schedule:
-    # 記得 GitHub 用的是 UTC 時間 (香港時間 -8)
-    # 晚上 9:00 PM HK = 13:00 UTC
-    # 早上 5:00 AM HK = 21:00 UTC
-    - cron: '0 13 * * *'
-    - cron: '0 21 * * *'
-  workflow_dispatch: # 允許手動掣
+    - cron: '0 21 * * *' # 5 AM HK
+    - cron: '0 13 * * *' # 9 PM HK
+  workflow_dispatch:
 
 jobs:
   run_bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必須要有寫入權限
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
@@ -24,5 +23,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests pytz
 
-      - name: Run Weather Script
+      - name: Run Bot
         run: python weather_script.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add subscribers.json
+          git commit -m "Update subscribers list" || exit 0
+          git push
