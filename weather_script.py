@@ -14,14 +14,33 @@ def log(msg):
     now = datetime.datetime.now(pytz.timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{now}] {msg}")
 
+def get_uv_desc(val):
+    try:
+        v = float(val)
+        if v <= 2: return "低 (舒服)"
+        if v <= 5: return "中等 (出街啱啱好)"
+        if v <= 7: return "高 (記得查防曬)"
+        if v <= 10: return "甚高 (避免曝曬)"
+        return "極高 (一定要帶傘/帽)"
+    except: return None
+
+def get_aqhi_desc(val):
+    try:
+        v = int(val)
+        if v <= 3: return "低 (空氣清新)"
+        if v <= 6: return "中 (普通)"
+        if v <= 7: return "高 (少做劇烈運動)"
+        if v <= 10: return "甚高 (盡量留喺室內)"
+        return "嚴重 (戴口罩，唔好戶外運動)"
+    except: return None
+
 def safe_get_json(url, name):
     try:
-        log(f"正在獲取 {name}...")
-        res = requests.get(url, timeout=20)
+        res = requests.get(url, timeout=15)
         res.raise_for_status()
         return res.json()
-    except Exception as e:
-        log(f"警告: {name} 獲取失敗 ({e})")
+    except:
+        log(f"警告: {name} 暫時無法獲取，將會跳過。")
         return None
 
 def get_weather_data():
@@ -29,58 +48,62 @@ def get_weather_data():
     fore_data = safe_get_json("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc", "九天預測")
     aqhi_data = safe_get_json("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=aqhi&lang=tc", "空氣質素")
     
-    # 預設數值
-    result = {
-        "location": DEFAULT_LOCATION,
-        "temp": "N/A", "humidity": "N/A", "warning": "暫無資料",
-        "uv": "無資料", "aqhi": "未知", "future": "暫無預測資料",
-        "timestamp": datetime.datetime.now(pytz.timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d %H:%M:%S (%A)')
+    res = {
+        "ts": datetime.datetime.now(pytz.timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d %H:%M:%S (%A)'),
+        "temp": None, "hum": None, "warn": None, "uv": None, "aqhi": None, "future": None
     }
 
-    # 解析即時天氣
     if curr_data:
-        temp_list = curr_data.get('temperature', {}).get('data', [])
-        result["temp"] = next((item['value'] for item in temp_list if item['place'] == DEFAULT_LOCATION), "N/A")
-        result["humidity"] = curr_data.get('humidity', {}).get('data', [{}])[0].get('value', "N/A")
-        result["warning"] = " ".join(curr_data.get('warningMessage', [])) or "暫無警告"
-        uv_data = curr_data.get('uvindex', {}).get('data', [])
-        if uv_data: result["uv"] = uv_data[0].get('value', "無資料")
+        t_list = curr_data.get('temperature', {}).get('data', [])
+        res["temp"] = next((i['value'] for i in t_list if i['place'] == DEFAULT_LOCATION), None)
+        res["hum"] = curr_data.get('humidity', {}).get('data', [{}])[0].get('value', None)
+        w_msg = " ".join(curr_data.get('warningMessage', []))
+        if w_msg: res["warn"] = w_msg
+        
+        uv_val = curr_data.get('uvindex', {}).get('data', [{}])[0].get('value')
+        if uv_val is not None: res["uv"] = get_uv_desc(uv_val)
 
-    # 解析空氣質素 (AQHI)
     if aqhi_data:
         for item in aqhi_data.get('aqhi', []):
             if "元朗" in item['station']:
-                result["aqhi"] = item['aqhi']
+                res["aqhi"] = get_aqhi_desc(item['aqhi'])
 
-    # 解析未來預測
     if fore_data:
-        forecast_list = []
-        forecasts = fore_data.get('weatherForecast', [])
-        for i in range(1, min(4, len(forecasts))): 
-            f = forecasts[i]
-            date_str = f.get('forecastDate', '00000000')
-            formatted_date = f"{date_str[4:6]}/{date_str[6:8]}({f.get('week', '')})"
-            t_range = f"{f.get('forecastMintemp',{}).get('value')}-{f.get('forecastMaxtemp',{}).get('value')}°C"
-            psr = f.get('PSR', '未知')
-            desc = f.get('forecastWeather', f.get('forecastForecast', '無描述'))
-            forecast_list.append(f"• <b>{formatted_date}</b>: {t_range} | 🌧️ {psr}\n  <i>{desc}</i>")
-        result["future"] = "\n".join(forecast_list)
+        f_list = []
+        for i in range(1, 4):
+            f = fore_data['weatherForecast'][i]
+            d = f"{f['forecastDate'][4:6]}/{f['forecastDate'][6:8]}({f['week']})"
+            t = f"{f['forecastMintemp']['value']}-{f['forecastMaxtemp']['value']}°C"
+            p = f.get('PSR', '未知')
+            desc = f.get('forecastWeather', f.get('forecastForecast', ''))
+            f_list.append(f"• <b>{d}</b>: {t} | 🌧️ {p}\n  <i>{desc}</i>")
+        res["future"] = "\n".join(f_list)
 
-    return result
+    return res
 
-def ask_ai(weather):
-    log("請求 AI 綜合決策建議...")
+def ask_ai(w):
+    log("請求 AI 穿衣建議...")
+    # 只將有的數據放入 Prompt
+    info = f"現在氣溫：{w['temp']}度, 濕度：{w['hum']}%"
+    if w['warn']: info += f", 警告：{w['warn']}"
+    if w['uv']: info += f", 紫外線：{w['uv']}"
+    if w['aqhi']: info += f", 空氣質素：{w['aqhi']}"
+    
     prompt = f"""
-    你係香港男仔生活助手。請用地道廣東話回覆。唔好用 Markdown 符號（禁止 * ）。
-    地點：{weather['location']}
-    現在氣溫：{weather['temp']}度, 濕度：{weather['humidity']}%, 警告：{weather['warning']}
-    紫外線：{weather['uv']}, AQHI：{weather['aqhi']}
-    未來三日預測：
-    {weather['future']}
+    你係香港男仔生活助手。請用地道廣東話回覆。唔好用 Markdown（禁止 * ）。
+    數據：{info}
+    未來三日：{w['future']}
+    
+    穿衣清單：恤衫長/短袖, 長褲, 毛衣背心, 長袖毛衣, PE風褸, 校褸, 底衣/褲。
     
     指令：
-    1. 穿衣決策：(限用:恤衫長/短袖,長褲,毛衣背心,長袖毛衣,PE風褸,校褸,底衣/褲)。20度以上唔好叫我著校褸。要果斷決策，唔好畀選擇。
-    2. 生活貼士：(要唔要帶遮、要唔要防曬、適唔適合戶外運動、曬唔曬得衫)。
+    1. 20度以上唔好著校褸。
+    2. 格式嚴格要求：
+    【學校校服】
+    (具體建議)
+    【出街穿搭】
+    (具體建議)
+    3. 果斷決定，唔好畀選擇。
     """
     
     for model in ["gemini-fast", "openai-fast"]:
@@ -91,44 +114,46 @@ def ask_ai(weather):
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": "你係果斷嘅香港生活顧問，回覆只使用 HTML 標籤 <b>, <i>。唔好開場白。"},
+                        {"role": "system", "content": "你係果斷嘅香港穿衣顧問。回覆只用 HTML 標籤 <b>, <i>。唔好有廢話。"},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.4
-                },
-                timeout=20
+                }, timeout=20
             )
             return res.json()['choices'][0]['message']['content'].strip()
-        except:
-            continue
-    return "AI 暫時未能提供建議。"
+        except: continue
+    return "AI 忙碌中。"
 
 def send_telegram(text):
-    log("發送 Telegram...")
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    payload = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    r = requests.post(url, json=payload)
-    if r.status_code != 200:
-        log(f"TG 失敗: {r.text}")
+    requests.post(url, json={"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"})
 
 if __name__ == "__main__":
     try:
-        data = get_weather_data()
-        advice = ask_ai(data)
+        w = get_weather_data()
+        advice = ask_ai(w)
         
-        # 建立最終訊息
-        msg = f"🗓️ <b>報告時間: {data['timestamp']}</b>\n"
-        msg += f"📍 <b>{data['location']} 實用資訊</b>\n"
+        # 建立訊息，如果數據係 None 就唔顯示嗰行
+        msg = f"🗓️ <b>{w['ts']}</b>\n"
+        msg += f"📍 <b>{DEFAULT_LOCATION} 天氣報告</b>\n"
         msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"🌡️ 現在: <b>{data['temp']}°C</b> | 💧 <b>{data['humidity']}%</b>\n"
-        msg += f"☀️ UV: <b>{data['uv']}</b> | 😷 AQHI: <b>{data['aqhi']}</b>\n"
-        msg += f"⚠️ {data['warning']}\n"
+        
+        if w['temp'] and w['hum']:
+            msg += f"🌡️ 現在: <b>{w['temp']}°C</b> | 💧 <b>{w['hum']}%</b>\n"
+        
+        # 只有存在數據時才顯示 UV 同 AQHI
+        if w['uv']:   msg += f"☀️ 紫外線: <b>{w['uv']}</b>\n"
+        if w['aqhi']: msg += f"😷 空氣質素: <b>{w['aqhi']}</b>\n"
+        if w['warn']: msg += f"⚠️ {w['warn']}\n"
+        
         msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"<b>🔮 未來三日 (降雨概率):</b>\n{data['future']}\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"<b>💡 AI 綜合決策建議:</b>\n{advice}"
+        if w['future']:
+            msg += f"<b>🔮 未來三日預測:</b>\n{w['future']}\n"
+            msg += f"━━━━━━━━━━━━━━━\n"
+        
+        msg += f"<b>👕 穿衣決策:</b>\n{advice}"
         
         send_telegram(msg)
-        log("腳本執行完成！")
+        log("完成！")
     except Exception as e:
-        log(f"嚴重錯誤: {e}")
+        log(f"出錯: {e}")
