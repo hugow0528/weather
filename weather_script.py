@@ -40,7 +40,7 @@ def safe_get_json(url, name):
         res.raise_for_status()
         return res.json()
     except:
-        log(f"警告: {name} 暫時無法獲取，將會跳過。")
+        log(f"警告: {name} 跳過。")
         return None
 
 def get_weather_data():
@@ -59,7 +59,6 @@ def get_weather_data():
         res["hum"] = curr_data.get('humidity', {}).get('data', [{}])[0].get('value', None)
         w_msg = " ".join(curr_data.get('warningMessage', []))
         if w_msg: res["warn"] = w_msg
-        
         uv_val = curr_data.get('uvindex', {}).get('data', [{}])[0].get('value')
         if uv_val is not None: res["uv"] = get_uv_desc(uv_val)
 
@@ -83,27 +82,32 @@ def get_weather_data():
 
 def ask_ai(w):
     log("請求 AI 穿衣建議...")
-    # 只將有的數據放入 Prompt
     info = f"現在氣溫：{w['temp']}度, 濕度：{w['hum']}%"
     if w['warn']: info += f", 警告：{w['warn']}"
     if w['uv']: info += f", 紫外線：{w['uv']}"
     if w['aqhi']: info += f", 空氣質素：{w['aqhi']}"
     
     prompt = f"""
-    你係香港男仔生活助手。請用地道廣東話回覆。唔好用 Markdown（禁止 * ）。
-    數據：{info}
-    未來三日：{w['future']}
+    你係香港男仔生活助手。請用地道廣東話回覆。禁止使用 Markdown 符號（禁止 * ）。
     
-    穿衣清單：恤衫長/短袖, 長褲, 毛衣背心, 長袖毛衣, PE風褸, 校褸, 底衣/褲。
+    【今日數據】
+    {info}
+    未來三日預測：{w['future']}
     
-    指令：
-    1. 20度以上唔好著校褸。
-    2. 格式嚴格要求：
+    【兩大穿衣範疇指令 - 嚴格執行】
+    1. 【學校校服】：
+       - 必須且只能從此清單選擇：恤衫(夏季短袖/冬季長袖), 長褲, 毛衣(背心), 毛衣(長袖), PE外套(風褸), 校褸, 底衣/褲(長/短/保暖/背心)。
+       - 邏輯：校褸限15度以下；20度以上穿夏季短袖恤衫。
+    
+    2. 【出街穿搭】：
+       - 自由選擇普通男仔休閒服裝（例如：T-shirt, 衛衣, 褸, 牛仔褲, 短褲）。
+       - 禁止在此部分出現「恤衫」、「PE風褸」或「校褸」。
+    
+    格式：
     【學校校服】
-    (具體建議)
+    (直接決定，唔好畀選擇)
     【出街穿搭】
-    (具體建議)
-    3. 果斷決定，唔好畀選擇。
+    (直接決定，唔好畀選擇)
     """
     
     for model in ["gemini-fast", "openai-fast"]:
@@ -114,10 +118,10 @@ def ask_ai(w):
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": "你係果斷嘅香港穿衣顧問。回覆只用 HTML 標籤 <b>, <i>。唔好有廢話。"},
+                        {"role": "system", "content": "你係專業香港男裝顧問。回覆只用 HTML 標籤 <b>, <i>。嚴格分開校服與出街衫。"},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.4
+                    "temperature": 0.3
                 }, timeout=20
             )
             return res.json()['choices'][0]['message']['content'].strip()
@@ -133,24 +137,17 @@ if __name__ == "__main__":
         w = get_weather_data()
         advice = ask_ai(w)
         
-        # 建立訊息，如果數據係 None 就唔顯示嗰行
         msg = f"🗓️ <b>{w['ts']}</b>\n"
         msg += f"📍 <b>{DEFAULT_LOCATION} 天氣報告</b>\n"
         msg += f"━━━━━━━━━━━━━━━\n"
-        
-        if w['temp'] and w['hum']:
-            msg += f"🌡️ 現在: <b>{w['temp']}°C</b> | 💧 <b>{w['hum']}%</b>\n"
-        
-        # 只有存在數據時才顯示 UV 同 AQHI
+        if w['temp']: msg += f"🌡️ 現在: <b>{w['temp']}°C</b> | 💧 <b>{w['hum']}%</b>\n"
         if w['uv']:   msg += f"☀️ 紫外線: <b>{w['uv']}</b>\n"
         if w['aqhi']: msg += f"😷 空氣質素: <b>{w['aqhi']}</b>\n"
         if w['warn']: msg += f"⚠️ {w['warn']}\n"
-        
         msg += f"━━━━━━━━━━━━━━━\n"
         if w['future']:
             msg += f"<b>🔮 未來三日預測:</b>\n{w['future']}\n"
             msg += f"━━━━━━━━━━━━━━━\n"
-        
         msg += f"<b>👕 穿衣決策:</b>\n{advice}"
         
         send_telegram(msg)
